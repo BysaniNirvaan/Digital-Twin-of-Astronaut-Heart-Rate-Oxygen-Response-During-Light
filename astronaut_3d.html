@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Astronaut Digital Twin – Live 3D Visualization</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font-family: 'Orbitron', monospace; }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 10;
+  }
+
+  #title {
+    position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
+    color: #00e5ff; font-size: 20px; letter-spacing: 4px; text-transform: uppercase;
+    text-shadow: 0 0 20px #00e5ff88;
+    font-family: 'Orbitron', sans-serif;
+  }
+
+  #vitals {
+    position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 24px; pointer-events: none;
+  }
+
+  .vital-card {
+    background: rgba(0,20,40,0.75);
+    border: 1px solid #00e5ff44;
+    border-radius: 12px;
+    padding: 14px 22px;
+    text-align: center;
+    backdrop-filter: blur(8px);
+    min-width: 110px;
+    box-shadow: 0 0 20px #00e5ff22;
+  }
+
+  .vital-label {
+    font-size: 10px; letter-spacing: 2px; color: #88ccff; text-transform: uppercase;
+  }
+
+  .vital-value {
+    font-size: 26px; font-weight: 700; color: #00e5ff;
+    text-shadow: 0 0 12px #00e5ff;
+    font-family: 'Orbitron', sans-serif;
+    margin-top: 4px;
+  }
+
+  .vital-unit { font-size: 11px; color: #4499bb; }
+
+  #controls-hint {
+    position: fixed; top: 70px; right: 24px;
+    color: #ffffff44; font-size: 11px; letter-spacing: 1px; text-align: right;
+    line-height: 1.8;
+  }
+
+  #status-ring {
+    position: fixed; top: 24px; right: 24px;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #00ff88;
+    box-shadow: 0 0 12px #00ff88;
+    animation: pulse 1.5s infinite;
+  }
+
+  @keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.4; transform: scale(0.7); }
+  }
+
+  #mission-info {
+    position: fixed; top: 24px; left: 24px;
+    color: #00e5ff88; font-size: 11px; letter-spacing: 1.5px; line-height: 1.9;
+  }
+
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div id="title">Astronaut Digital Twin</div>
+<div id="status-ring"></div>
+
+<div id="mission-info">
+  MISSION: ISS-ALPHA<br>
+  CREW: ASTRONAUT_MALE_28<br>
+  STATUS: <span style="color:#00ff88">NOMINAL</span><br>
+  EVA: T+00:04:23
+</div>
+
+<div id="controls-hint">
+  🖱 Drag to rotate<br>
+  🖱 Scroll to zoom<br>
+  🖱 Right-drag to pan
+</div>
+
+<div id="vitals">
+  <div class="vital-card">
+    <div class="vital-label">Heart Rate</div>
+    <div class="vital-value" id="hr">72</div>
+    <div class="vital-unit">BPM</div>
+  </div>
+  <div class="vital-card">
+    <div class="vital-label">SpO₂</div>
+    <div class="vital-value" id="spo2">98</div>
+    <div class="vital-unit">%</div>
+  </div>
+  <div class="vital-card">
+    <div class="vital-label">Respiration</div>
+    <div class="vital-value" id="resp">14</div>
+    <div class="vital-unit">BR/MIN</div>
+  </div>
+  <div class="vital-card">
+    <div class="vital-label">Temp</div>
+    <div class="vital-value" id="temp">36.8</div>
+    <div class="vital-unit">°C</div>
+  </div>
+  <div class="vital-card">
+    <div class="vital-label">Pressure</div>
+    <div class="vital-value" id="press">14.7</div>
+    <div class="vital-unit">PSI</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+// ─── SCENE SETUP ───────────────────────────────────────────────────────────
+const scene    = new THREE.Scene();
+const camera   = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 2000);
+camera.position.set(0, 1.5, 5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+document.body.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.minDistance = 2;
+controls.maxDistance = 12;
+controls.target.set(0, 1, 0);
+
+// ─── LIGHTING ──────────────────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0x112244, 1.2));
+
+const sun = new THREE.DirectionalLight(0xffeedd, 3);
+sun.position.set(8, 12, 6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+scene.add(sun);
+
+const fill = new THREE.PointLight(0x4488ff, 1.5, 20);
+fill.position.set(-4, 3, -4);
+scene.add(fill);
+
+const rim = new THREE.PointLight(0x00e5ff, 1.0, 15);
+rim.position.set(0, 6, -5);
+scene.add(rim);
+
+// ─── MATERIALS ─────────────────────────────────────────────────────────────
+const suitMat = new THREE.MeshStandardMaterial({
+  color: 0xddeeff, metalness: 0.15, roughness: 0.35,
+  envMapIntensity: 0.8
+});
+
+const helmetMat = new THREE.MeshPhysicalMaterial({
+  color: 0x223344, metalness: 0.1, roughness: 0.05,
+  transmission: 0.6, thickness: 0.5,
+  ior: 1.5, transparent: true, opacity: 0.85,
+  envMapIntensity: 1.2
+});
+
+const visorMat = new THREE.MeshPhysicalMaterial({
+  color: 0xffaa00, metalness: 0.3, roughness: 0.05,
+  transmission: 0.5, transparent: true, opacity: 0.7,
+  envMapIntensity: 1.5
+});
+
+const goldMat = new THREE.MeshStandardMaterial({
+  color: 0xddaa44, metalness: 0.9, roughness: 0.2
+});
+
+const darkMat = new THREE.MeshStandardMaterial({
+  color: 0x334455, metalness: 0.4, roughness: 0.6
+});
+
+const connMat = new THREE.MeshStandardMaterial({
+  color: 0x99bbcc, metalness: 0.5, roughness: 0.4
+});
+
+// ─── ASTRONAUT BUILDER ─────────────────────────────────────────────────────
+const astronaut = new THREE.Group();
+
+function mesh(geo, mat, x=0, y=0, z=0, rx=0, ry=0, rz=0) {
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, y, z);
+  m.rotation.set(rx, ry, rz);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
+}
+
+// TORSO
+const torso = mesh(new THREE.CylinderGeometry(0.38, 0.32, 0.85, 18), suitMat, 0, 1.2, 0);
+astronaut.add(torso);
+
+// BACKPACK (PLSS)
+const plss = mesh(new THREE.BoxGeometry(0.58, 0.70, 0.26), suitMat, 0, 1.22, -0.38);
+astronaut.add(plss);
+const plssDetail = mesh(new THREE.BoxGeometry(0.44, 0.55, 0.06), darkMat, 0, 1.22, -0.52);
+astronaut.add(plssDetail);
+// Tank details
+[[-0.14,1.0,-0.52],[0.14,1.0,-0.52]].forEach(([x,y,z])=>{
+  astronaut.add(mesh(new THREE.CylinderGeometry(0.04,0.04,0.38,12), connMat, x, y, z, Math.PI/2, 0, 0));
+});
+
+// CHEST PANEL
+const chest = mesh(new THREE.BoxGeometry(0.36, 0.28, 0.06), darkMat, 0, 1.26, 0.38);
+astronaut.add(chest);
+// Chest buttons
+[-0.08,0,0.08].forEach(x => {
+  const btn = mesh(new THREE.CylinderGeometry(0.025,0.025,0.03,8), goldMat, x, 1.3, 0.41);
+  astronaut.add(btn);
+});
+
+// HELMET BASE RING
+astronaut.add(mesh(new THREE.TorusGeometry(0.30, 0.05, 12, 40), connMat, 0, 1.73, 0));
+
+// HELMET
+const helmet = mesh(new THREE.SphereGeometry(0.34, 32, 32), helmetMat, 0, 1.94, 0);
+astronaut.add(helmet);
+
+// VISOR
+const visorGeo = new THREE.SphereGeometry(0.345, 32, 32, 0.3, Math.PI*1.4, 0.5, Math.PI*0.55);
+const visor = new THREE.Mesh(visorGeo, visorMat);
+visor.position.set(0, 1.94, 0);
+visor.rotation.y = Math.PI;
+astronaut.add(visor);
+
+// HELMET LIGHTS
+[-0.2, 0.2].forEach(x => {
+  const lMesh = mesh(new THREE.CylinderGeometry(0.035,0.035,0.04,10), new THREE.MeshStandardMaterial({
+    color:0xffffff, emissive:0xffffff, emissiveIntensity:2
+  }), x, 2.15, 0.24, Math.PI/6,0,0);
+  astronaut.add(lMesh);
+  const pl = new THREE.PointLight(0xffffff, 0.5, 1.2);
+  pl.position.set(x, 2.15, 0.35);
+  astronaut.add(pl);
+});
+
+// LEFT ARM
+const lShoulder = mesh(new THREE.SphereGeometry(0.18, 16, 16), suitMat, -0.52, 1.52, 0);
+astronaut.add(lShoulder);
+const lUpper = mesh(new THREE.CylinderGeometry(0.14, 0.13, 0.45, 14), suitMat, -0.58, 1.22, 0, 0,0, -0.18);
+astronaut.add(lUpper);
+const lElbow = mesh(new THREE.SphereGeometry(0.13, 14, 14), suitMat, -0.64, 0.97, 0);
+astronaut.add(lElbow);
+const lFore = mesh(new THREE.CylinderGeometry(0.11, 0.10, 0.42, 14), suitMat, -0.70, 0.73, 0.1, 0.3, 0, -0.22);
+astronaut.add(lFore);
+const lGlove = mesh(new THREE.SphereGeometry(0.115, 14, 14), suitMat, -0.76, 0.52, 0.18);
+astronaut.add(lGlove);
+
+// RIGHT ARM (mirror)
+const rShoulder = mesh(new THREE.SphereGeometry(0.18, 16, 16), suitMat, 0.52, 1.52, 0);
+astronaut.add(rShoulder);
+const rUpper = mesh(new THREE.CylinderGeometry(0.14, 0.13, 0.45, 14), suitMat, 0.58, 1.22, 0, 0,0, 0.18);
+astronaut.add(rUpper);
+const rElbow = mesh(new THREE.SphereGeometry(0.13, 14, 14), suitMat, 0.64, 0.97, 0);
+astronaut.add(rElbow);
+const rFore = mesh(new THREE.CylinderGeometry(0.11, 0.10, 0.42, 14), suitMat, 0.70, 0.73, 0.1, 0.3, 0, 0.22);
+astronaut.add(rFore);
+const rGlove = mesh(new THREE.SphereGeometry(0.115, 14, 14), suitMat, 0.76, 0.52, 0.18);
+astronaut.add(rGlove);
+
+// ARM BANDS
+[-0.61, 0.61].forEach(x => {
+  astronaut.add(mesh(new THREE.TorusGeometry(0.14, 0.025, 10, 30), goldMat, x, 1.10, 0, 0,0, Math.PI/2));
+});
+
+// WAIST RING
+astronaut.add(mesh(new THREE.TorusGeometry(0.33, 0.045, 10, 40), connMat, 0, 0.78, 0));
+
+// PELVIS
+astronaut.add(mesh(new THREE.CylinderGeometry(0.30, 0.26, 0.30, 16), suitMat, 0, 0.66, 0));
+
+// LEFT LEG
+const lHip = mesh(new THREE.SphereGeometry(0.17, 14, 14), suitMat, -0.22, 0.52, 0);
+astronaut.add(lHip);
+const lThigh = mesh(new THREE.CylinderGeometry(0.15, 0.14, 0.52, 14), suitMat, -0.24, 0.22, 0, 0.06, 0, 0);
+astronaut.add(lThigh);
+const lKnee = mesh(new THREE.SphereGeometry(0.145, 14, 14), suitMat, -0.25, -0.06, 0);
+astronaut.add(lKnee);
+const lShin = mesh(new THREE.CylinderGeometry(0.13, 0.12, 0.46, 14), suitMat, -0.26, -0.33, 0.04, 0.1, 0, 0);
+astronaut.add(lShin);
+const lBoot = mesh(new THREE.BoxGeometry(0.22, 0.16, 0.34), darkMat, -0.26, -0.60, 0.06);
+astronaut.add(lBoot);
+
+// RIGHT LEG
+const rHip = mesh(new THREE.SphereGeometry(0.17, 14, 14), suitMat, 0.22, 0.52, 0);
+astronaut.add(rHip);
+const rThigh = mesh(new THREE.CylinderGeometry(0.15, 0.14, 0.52, 14), suitMat, 0.24, 0.22, 0, -0.06, 0, 0);
+astronaut.add(rThigh);
+const rKnee = mesh(new THREE.SphereGeometry(0.145, 14, 14), suitMat, 0.25, -0.06, 0);
+astronaut.add(rKnee);
+const rShin = mesh(new THREE.CylinderGeometry(0.13, 0.12, 0.46, 14), suitMat, 0.26, -0.33, 0.04, 0.1, 0, 0);
+astronaut.add(rShin);
+const rBoot = mesh(new THREE.BoxGeometry(0.22, 0.16, 0.34), darkMat, 0.26, -0.60, 0.06);
+astronaut.add(rBoot);
+
+// TETHER LINE
+const tetherCurve = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(0.3, 0.8, 0.2),
+  new THREE.Vector3(0.6, 0.6, 0.6),
+  new THREE.Vector3(1.2, 0.2, 1.0)
+]);
+const tetherGeo = new THREE.TubeGeometry(tetherCurve, 20, 0.012, 8, false);
+astronaut.add(new THREE.Mesh(tetherGeo, new THREE.MeshStandardMaterial({ color: 0xffcc44, metalness: 0.5, roughness: 0.4 })));
+
+scene.add(astronaut);
+astronaut.position.y = -0.4;
+
+// ─── STARS ─────────────────────────────────────────────────────────────────
+const starGeo = new THREE.BufferGeometry();
+const starCount = 4000;
+const starPos = new Float32Array(starCount * 3);
+for (let i = 0; i < starCount * 3; i++) starPos[i] = (Math.random() - 0.5) * 800;
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.6, sizeAttenuation: true })));
+
+// ─── EARTH ─────────────────────────────────────────────────────────────────
+const earthGeo = new THREE.SphereGeometry(28, 48, 48);
+const earthMat = new THREE.MeshPhongMaterial({
+  color: 0x2266aa, emissive: 0x112244, emissiveIntensity: 0.3,
+  shininess: 60
+});
+const earth = new THREE.Mesh(earthGeo, earthMat);
+earth.position.set(-38, -30, -60);
+scene.add(earth);
+
+// Continent patches (simple)
+const patchMat = new THREE.MeshPhongMaterial({ color: 0x228833, shininess: 20 });
+[[4,5,2],[-3,8,-2],[8,-2,4],[-5,-3,6]].forEach(([x,y,z]) => {
+  const p = new THREE.Mesh(new THREE.SphereGeometry(28.15, 12, 12, x*0.3, 0.6, y*0.2, 0.4), patchMat);
+  p.position.copy(earth.position);
+  scene.add(p);
+});
+
+// Cloud layer
+const cloudMat = new THREE.MeshPhongMaterial({
+  color: 0xffffff, transparent: true, opacity: 0.25, depthWrite: false
+});
+const clouds = new THREE.Mesh(new THREE.SphereGeometry(28.6, 36, 36), cloudMat);
+clouds.position.copy(earth.position);
+scene.add(clouds);
+
+// Atmosphere glow
+const atmMat = new THREE.MeshPhongMaterial({
+  color: 0x4488ff, transparent: true, opacity: 0.12,
+  side: THREE.BackSide
+});
+const atm = new THREE.Mesh(new THREE.SphereGeometry(30.5, 32, 32), atmMat);
+atm.position.copy(earth.position);
+scene.add(atm);
+
+// ─── ISS DEBRIS / FLOATING PARTICLES ───────────────────────────────────────
+const debrisGroup = new THREE.Group();
+const debrisMat = new THREE.MeshStandardMaterial({ color: 0x99aacc, metalness: 0.6, roughness: 0.3 });
+for (let i = 0; i < 18; i++) {
+  const size = Math.random() * 0.06 + 0.02;
+  const d = new THREE.Mesh(new THREE.IcosahedronGeometry(size, 0), debrisMat);
+  d.position.set((Math.random()-0.5)*6, (Math.random()-0.5)*4 + 1, (Math.random()-0.5)*6);
+  d.userData.vel = new THREE.Vector3(
+    (Math.random()-0.5)*0.002, (Math.random()-0.5)*0.002, (Math.random()-0.5)*0.002
+  );
+  debrisGroup.add(d);
+}
+scene.add(debrisGroup);
+
+// ─── GLOW RING (scan effect) ────────────────────────────────────────────────
+const glowGeo = new THREE.TorusGeometry(0.8, 0.03, 8, 60);
+const glowMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.35 });
+const glowRing = new THREE.Mesh(glowGeo, glowMat);
+glowRing.position.y = 0.6;
+astronaut.add(glowRing);
+
+// ─── RESIZE HANDLER ────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ─── VITALS SIMULATION ─────────────────────────────────────────────────────
+let hrBase = 72, spo2Base = 98, respBase = 14, tempBase = 36.8, pressBase = 14.7;
+let hrT = 0, spo2T = 0, respT = 0;
+
+function updateVitals() {
+  hrT += 0.012;
+  spo2T += 0.008;
+  respT += 0.007;
+
+  const hr   = Math.round(hrBase   + Math.sin(hrT) * 5   + Math.random() * 2 - 1);
+  const spo2 = (spo2Base + Math.sin(spo2T) * 0.8 + Math.random()*0.4 - 0.2).toFixed(0);
+  const resp = Math.round(respBase + Math.sin(respT) * 2  + Math.random() - 0.5);
+  const temp = (tempBase + Math.sin(hrT * 0.3) * 0.3 + Math.random()*0.1 - 0.05).toFixed(1);
+  const press = (pressBase + Math.sin(hrT * 0.1) * 0.15).toFixed(1);
+
+  document.getElementById('hr').textContent    = hr;
+  document.getElementById('spo2').textContent  = spo2;
+  document.getElementById('resp').textContent  = resp;
+  document.getElementById('temp').textContent  = temp;
+  document.getElementById('press').textContent = press;
+
+  // Color code heart rate
+  const hrEl = document.getElementById('hr');
+  hrEl.style.color = hr > 90 ? '#ff6644' : hr < 55 ? '#ffcc00' : '#00e5ff';
+}
+
+// ─── EVA TIMER ─────────────────────────────────────────────────────────────
+const missionEl = document.querySelector('#mission-info span:last-child') || null;
+let evaSeconds = 263;
+setInterval(() => {
+  evaSeconds++;
+  const h = String(Math.floor(evaSeconds/3600)).padStart(2,'0');
+  const m = String(Math.floor((evaSeconds%3600)/60)).padStart(2,'0');
+  const s = String(evaSeconds%60).padStart(2,'0');
+  const evaEl = document.querySelector('#mission-info');
+  if (evaEl) {
+    evaEl.innerHTML = `MISSION: ISS-ALPHA<br>CREW: ASTRONAUT_MALE_28<br>STATUS: <span style="color:#00ff88">NOMINAL</span><br>EVA: T+${h}:${m}:${s}`;
+  }
+}, 1000);
+
+// ─── ANIMATE ───────────────────────────────────────────────────────────────
+let t = 0;
+let vitalTimer = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  t += 0.008;
+
+  // Floating astronaut
+  astronaut.position.y = -0.4 + Math.sin(t * 0.9) * 0.14;
+  astronaut.rotation.y += 0.003;
+
+  // Subtle body sway
+  lUpper.rotation.z = -0.18 + Math.sin(t * 1.1) * 0.08;
+  rUpper.rotation.z =  0.18 - Math.sin(t * 1.1) * 0.08;
+  lFore.rotation.z  = -0.22 + Math.sin(t * 1.3) * 0.06;
+  rFore.rotation.z  =  0.22 - Math.sin(t * 1.3) * 0.06;
+
+  // Glow ring scan
+  glowRing.position.y = 0.2 + Math.sin(t * 2) * 1.2;
+  glowMat.opacity = 0.15 + Math.sin(t * 3) * 0.12;
+
+  // Earth slow rotation
+  earth.rotation.y += 0.0006;
+  clouds.rotation.y += 0.0009;
+  clouds.rotation.x += 0.0002;
+
+  // Debris drift
+  debrisGroup.children.forEach(d => {
+    d.position.add(d.userData.vel);
+    d.rotation.x += 0.005;
+    d.rotation.y += 0.007;
+    if (d.position.length() > 5) d.userData.vel.negate();
+  });
+
+  // Pulse visor
+  visorMat.opacity = 0.6 + Math.sin(t * 2) * 0.08;
+
+  // Vitals update
+  vitalTimer++;
+  if (vitalTimer % 30 === 0) updateVitals();
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+animate();
+</script>
+</body>
+</html>
